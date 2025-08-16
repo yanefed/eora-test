@@ -52,7 +52,9 @@ class ContextBuilder:
 
         return "\n---\n".join(context_parts[: self.max_context_length])
 
-    def extract_sources(self, search_results: List[Dict], limit: int = 5) -> List[Dict]:
+    def extract_sources(
+        self, search_results: List[Dict], limit: int = 36
+    ) -> List[Dict]:
         """
         Извлекает и форматирует источники из результатов поиска.
 

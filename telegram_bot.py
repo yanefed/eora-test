@@ -66,7 +66,7 @@ class TelegramBot:
         try:
             # Поиск релевантной информации
             logger.info(f"Поиск информации по запросу: {user_message}")
-            search_results = await self.search_engine.search(user_message, top_k=8)
+            search_results = await self.search_engine.search(user_message, top_k=36)
 
             if not search_results:
                 await update.message.reply_text(

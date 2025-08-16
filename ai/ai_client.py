@@ -137,7 +137,7 @@ class AIClient:
         context: str,
         model: str = "gpt-4o",
         temperature: float = 0.2,
-        max_tokens: int = 2000,
+        max_tokens: int = 5000,
         system_prompt: Optional[str] = None,
     ) -> str:
         """
@@ -191,7 +191,7 @@ class AIClient:
         context: str,
         model: str = "gpt-4o",
         temperature: float = 0.2,
-        max_tokens: int = 2000,
+        max_tokens: int = 5000,
     ) -> AsyncGenerator[str, None]:
         """
         Стримит ответ от языковой модели по мере генерации.
