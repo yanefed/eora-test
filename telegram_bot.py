@@ -1,11 +1,12 @@
 import logging
+import re
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
-    MessageHandler,
     ContextTypes,
+    MessageHandler,
     filters,
 )
 
@@ -85,6 +86,27 @@ class TelegramBot:
                 )
                 return
 
+            # Получаем источники
+            sources = self.context_builder.extract_sources(search_results)
+
+            # Модифицируем контекст, добавляя информацию об источниках и инструкции по форматированию
+            sources_info = "\n\nИСТОЧНИКИ ДЛЯ ЦИТИРОВАНИЯ:\n"
+            for i, source in enumerate(sources, 1):
+                sources_info += f"{i}. {source['name']} - {source['url']}\n"
+
+            formatting_instructions = """
+    ВАЖНО: При ответе ОБЯЗАТЕЛЬНО соблюдай эти правила для цитирования:
+    1. Когда ссылаешься на информацию из источников, указывай источник в формате [N]
+    2. N должно быть номером источника из списка выше (начиная с 1)
+    3. Добавляй ссылку [N] СРАЗУ после текста, к которому она относится
+    4. Используй только те источники, которые указаны в списке выше
+    5. НЕ добавляй URL внутри текста, используй только номера в квадратных скобках
+    6. НЕ добавляй отдельный список источников в конце ответа
+    """
+
+            # Добавляем источники и инструкции к контексту
+            enhanced_context = context_for_llm + sources_info + formatting_instructions
+
             # Отправляем сообщение о генерации ответа
             progress_message = await update.message.reply_text("...")
 
@@ -92,44 +114,59 @@ class TelegramBot:
             full_response = ""
             message_update_counter = 0
             async for response_chunk in self.ai_client.stream_completion(
-                user_message, context_for_llm
+                user_message, enhanced_context
             ):
                 full_response += response_chunk
                 message_update_counter += 1
 
-                # Обновляем сообщение каждые 10 чанков или если чанк содержит знак конца абзаца
-                if message_update_counter >= 10 or "\n" in response_chunk:
+                # Обновляем сообщение каждые 50 чанков или если чанк содержит знак конца абзаца
+                if message_update_counter >= 50 or "\n" in response_chunk:
                     try:
                         await context.bot.edit_message_text(
                             chat_id=chat_id,
                             message_id=progress_message.message_id,
                             text=full_response,
-                            parse_mode="markdown",
                         )
                         message_update_counter = 0
                     except Exception as e:
                         logger.warning(f"Не удалось обновить сообщение: {e}")
 
-            # Обновляем сообщение с полным ответом в конце
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=progress_message.message_id,
-                    text=full_response,
-                    parse_mode="markdown",
+            # После получения полного ответа, обрабатываем ссылки
+            processed_response = full_response
+
+            # Сначала находим все упоминания [N] в тексте
+            # Используем более точный паттерн, который находит только отдельно стоящие [N]
+            citation_pattern = r"(?<!\])\[(\d+)\]"
+            citations = re.findall(citation_pattern, processed_response)
+
+            # Создаем словарь соответствия оригинальных номеров и URL источников
+            citation_urls = {}
+            for citation in citations:
+                citation_num = int(citation)
+                if 1 <= citation_num <= len(sources):
+                    # Номер источника валидный
+                    source_url = sources[citation_num - 1]["url"]
+                    # Безопасная обработка URL - экранируем специальные символы
+                    safe_url = (
+                        source_url.replace("(", "%28")
+                        .replace(")", "%29")
+                        .replace(" ", "%20")
+                    )
+                    citation_urls[f"[{citation}]"] = f"[{citation}]({safe_url})"
+
+            for citation_text, markdown_link in citation_urls.items():
+                processed_response = re.sub(
+                    r"(?<!\])\[" + re.escape(citation_text[1:-1]) + r"\]",
+                    f"\[{markdown_link}]",
+                    processed_response,
                 )
-            except Exception as e:
-                logger.warning(f"Не удалось обновить финальное сообщение: {e}")
 
-            # Создаем и отправляем клавиатуру с источниками
-            sources = self.context_builder.extract_sources(search_results)
-            keyboard = [
-                [InlineKeyboardButton(s["name"], url=s["url"])] for s in sources
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            await update.message.reply_text(
-                "📚 Источники информации:", reply_markup=reply_markup
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=progress_message.message_id,
+                text=processed_response,
+                parse_mode="markdown",
+                disable_web_page_preview=True,
             )
 
         except Exception as e:
