@@ -39,7 +39,7 @@ class ContextBuilder:
         for source, results in by_source.items():
             # Берем лучшие результаты из каждого источника
             best_results = sorted(results, key=lambda x: x["similarity"], reverse=True)[
-                :4
+                :10
             ]
 
             for result in best_results:
@@ -60,7 +60,10 @@ class ContextBuilder:
             search_results: Результаты поиска
             limit: Максимальное количество источников
         """
-        sources = sorted(list(set(res["source"] for res in search_results[:limit])))
+        all_sources = set()
+        for res in search_results:
+            all_sources.add(res["source"])
+        sources = sorted(list(all_sources))[:limit]
         formatted_sources = []
 
         for source in sources:

@@ -95,13 +95,14 @@ class TelegramBot:
                 sources_info += f"{i}. {source['name']} - {source['url']}\n"
 
             formatting_instructions = """
-    ВАЖНО: При ответе ОБЯЗАТЕЛЬНО соблюдай эти правила для цитирования:
-    1. Когда ссылаешься на информацию из источников, указывай источник в формате [N]
-    2. N должно быть номером источника из списка выше (начиная с 1)
-    3. Добавляй ссылку [N] СРАЗУ после текста, к которому она относится
-    4. Используй только те источники, которые указаны в списке выше
-    5. НЕ добавляй URL внутри текста, используй только номера в квадратных скобках
-    6. НЕ добавляй отдельный список источников в конце ответа
+ВАЖНО: При ответе ОБЯЗАТЕЛЬНО соблюдай эти правила для цитирования:
+1. Когда ссылаешься на информацию из источников, указывай источник в формате [N]
+2. N должно быть номером источника из списка выше (начиная с 1)
+3. Добавляй ссылку [N] СРАЗУ после текста, к которому она относится
+4. Цитируй каждый источник хотя бы один раз
+5. Используй все релевантные источники из предоставленного списка
+6. НЕ добавляй URL внутри текста, используй только номера в квадратных скобках
+7. НЕ добавляй отдельный список источников в конце ответа
     """
 
             # Добавляем источники и инструкции к контексту
@@ -113,6 +114,7 @@ class TelegramBot:
             # Получаем ответ от LLM со стримингом
             full_response = ""
             message_update_counter = 0
+
             async for response_chunk in self.ai_client.stream_completion(
                 user_message, enhanced_context
             ):
@@ -126,41 +128,48 @@ class TelegramBot:
                             chat_id=chat_id,
                             message_id=progress_message.message_id,
                             text=full_response,
+                            disable_web_page_preview=True,
                         )
                         message_update_counter = 0
                     except Exception as e:
                         logger.warning(f"Не удалось обновить сообщение: {e}")
 
             # После получения полного ответа, обрабатываем ссылки
-            processed_response = full_response
+            # Находим все упоминания [N] в тексте по порядку их появления
+            citations = re.findall(r"\[(\d+)\]", full_response)
 
-            # Сначала находим все упоминания [N] в тексте
-            # Используем более точный паттерн, который находит только отдельно стоящие [N]
-            citation_pattern = r"(?<!\])\[(\d+)\]"
-            citations = re.findall(citation_pattern, processed_response)
-
-            # Создаем словарь соответствия оригинальных номеров и URL источников
-            citation_urls = {}
+            # Получаем уникальные номера в порядке их появления в тексте
+            unique_citations = []
             for citation in citations:
-                citation_num = int(citation)
-                if 1 <= citation_num <= len(sources):
-                    # Номер источника валидный
-                    source_url = sources[citation_num - 1]["url"]
-                    # Безопасная обработка URL - экранируем специальные символы
-                    safe_url = (
-                        source_url.replace("(", "%28")
-                        .replace(")", "%29")
-                        .replace(" ", "%20")
-                    )
-                    citation_urls[f"[{citation}]"] = f"[{citation}]({safe_url})"
+                if citation not in unique_citations:
+                    unique_citations.append(citation)
 
-            for citation_text, markdown_link in citation_urls.items():
-                processed_response = re.sub(
-                    r"(?<!\])\[" + re.escape(citation_text[1:-1]) + r"\]",
-                    f"\[{markdown_link}]",
-                    processed_response,
-                )
+            # Создаем маппинг старых номеров на новые последовательные номера
+            citation_mapping = {old: i + 1 for i, old in enumerate(unique_citations)}
 
+            # Создаем маппинг новых номеров на URL источников
+            url_mapping = {}
+            for old_num, new_num in citation_mapping.items():
+                old_num_int = int(old_num)
+                if 1 <= old_num_int <= len(sources):
+                    url = sources[old_num_int - 1]["url"]
+                    url_mapping[new_num] = url
+
+            # Функция для замены ссылок на последовательные номера
+            def replace_citation(match):
+                old_num = match.group(1)
+                if old_num in citation_mapping:
+                    new_num = citation_mapping[old_num]
+                    if new_num in url_mapping:
+                        return f"\[[{new_num}]({url_mapping[new_num]})]"
+                    else:
+                        return f"[{new_num}]"
+                return match.group(0)
+
+            # Заменяем все ссылки [N] на последовательные номера с URL
+            processed_response = re.sub(r"\[(\d+)\]", replace_citation, full_response)
+
+            # Отправляем финальное сообщение с обработанными ссылками
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=progress_message.message_id,
