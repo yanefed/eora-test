@@ -1,10 +1,11 @@
 import asyncio
+import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import numpy as np
 from openai import AsyncOpenAI
 
-from logger import logger
+logger = logging.getLogger("eora")
 
 
 class AIClient:
